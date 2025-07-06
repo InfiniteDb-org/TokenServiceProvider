@@ -24,15 +24,17 @@ public class TokenService: ITokenService
     private readonly string _key;
     private readonly int _expiresInMinutes;
     private readonly AppDbContext _context;
+    private readonly IConfiguration _configuration;
     
     public TokenService(AppDbContext context, IConfiguration configuration)
     {
+        _context = context;
+        _configuration = configuration;
         _issuer = configuration["Issuer"] ?? throw new NullReferenceException("Issuer config not set");
         _audience = configuration["Audience"] ?? throw new NullReferenceException("Audience config not set");
         _key = configuration["Key"] ?? throw new NullReferenceException("Key config not set");
 
-        if (!int.TryParse(configuration["ExpiresInMinutes"], out _expiresInMinutes)) 
-            _expiresInMinutes = 10; _context = context;
+        if (!int.TryParse(configuration["ExpiresInMinutes"], out _expiresInMinutes)) _expiresInMinutes = 10; 
     }
     
 
@@ -186,16 +188,17 @@ public class TokenService: ITokenService
         string.IsNullOrWhiteSpace(role) ? "user" : char.ToUpper(role[0]) + role[1..].ToLower();
 
     // Helper: Generate a secure refresh token
-    private static RefreshToken GenerateRefreshToken(Guid userId, string? email, string? role)
+    private RefreshToken GenerateRefreshToken(Guid userId, string? email, string? role)
     {
         var randomBytes = new byte[64];
         using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
         rng.GetBytes(randomBytes);
+        var refreshTokenExpiresInDays = _configuration.GetValue("RefreshTokenExpiresInDays", 7);
         return new RefreshToken
         {
             Token = Convert.ToBase64String(randomBytes),
             UserId = userId,
-            ExpiresOnUtc = DateTime.UtcNow.AddDays(30), // 30 days expiration
+            ExpiresOnUtc = DateTime.UtcNow.AddDays(refreshTokenExpiresInDays),
             Created = DateTime.UtcNow,
             Email = email,
             Role = role
