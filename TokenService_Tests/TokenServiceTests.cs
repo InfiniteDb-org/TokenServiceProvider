@@ -1,24 +1,41 @@
 using TokenService.Api.Models;
+using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
+using TokenService.Api.Infrastructure.Database;
 
 namespace TokenService_Tests;
 
 public class TokenServiceTests
 {
     private readonly TokenService.Api.Services.TokenService _tokenService;
+    private readonly AppDbContext _dbContext;
 
     public TokenServiceTests()
     {
-        // set environment variables for test
-        Environment.SetEnvironmentVariable("Issuer", "TestIssuer");
-        Environment.SetEnvironmentVariable("Audience", "TestAudience");
-        Environment.SetEnvironmentVariable("Key", "supersecretkey12345678901234567890");
-        _tokenService = new TokenService.Api.Services.TokenService();
+        // Setup in-memory EF Core context
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        _dbContext = new AppDbContext(options);
+
+        // Setup IConfiguration
+        var inMemorySettings = new Dictionary<string, string>
+        {
+            {"Issuer", "TestIssuer"},
+            {"Audience", "TestAudience"},
+            {"Key", "supersecretkey12345678901234567890"},
+            {"ExpiresInMinutes", "10"}
+        };
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(inMemorySettings!)
+            .Build();
+
+        _tokenService = new TokenService.Api.Services.TokenService(_dbContext, configuration);
     }
 
     [Fact]
     public async Task GenerateAccessToken_ReturnsValidToken_WithCorrectClaims()
     {
-        // Arrange
         var userId = Guid.NewGuid();
         var request = new TokenRequest
         {
@@ -26,11 +43,7 @@ public class TokenServiceTests
             Email = "test@example.com",
             Role = "Admin"
         };
-
-        // Act
         var response = await _tokenService.GenerateAccessTokenAsync(request);
-
-        // Assert
         Assert.True(response.Succeeded);
         Assert.False(string.IsNullOrEmpty(response.AccessToken));
         Assert.False(string.IsNullOrEmpty(response.RefreshToken));
@@ -39,7 +52,6 @@ public class TokenServiceTests
     [Fact]
     public async Task ValidateAccessTokenAsync_ValidToken_ReturnsSuccess()
     {
-        // Arrange
         var userId = Guid.NewGuid();
         var request = new TokenRequest
         {
@@ -53,18 +65,13 @@ public class TokenServiceTests
             AccessToken = response.AccessToken!,
             UserId = userId
         };
-
-        // Act
         var validation = await _tokenService.ValidateAccessTokenAsync(validationRequest);
-
-        // Assert
         Assert.True(validation.Succeeded);
     }
 
     [Fact]
     public async Task RefreshToken_CanOnlyBeUsedOnce()
     {
-        // Arrange
         var userId = Guid.NewGuid();
         var request = new TokenRequest
         {
@@ -78,12 +85,8 @@ public class TokenServiceTests
             RefreshToken = response.RefreshToken!,
             UserId = userId
         };
-
-        // Act
         var refreshResponse1 = await _tokenService.RefreshAccessTokenAsync(refreshRequest);
         var refreshResponse2 = await _tokenService.RefreshAccessTokenAsync(refreshRequest);
-
-        // Assert
         Assert.True(refreshResponse1.Succeeded);
         Assert.False(refreshResponse2.Succeeded);
     }
@@ -91,7 +94,6 @@ public class TokenServiceTests
     [Fact]
     public async Task RefreshToken_ClaimsArePreserved()
     {
-        // Arrange
         var userId = Guid.NewGuid();
         var request = new TokenRequest
         {
@@ -105,16 +107,12 @@ public class TokenServiceTests
             RefreshToken = response.RefreshToken!,
             UserId = userId
         };
-
-        // Act
         var refreshResponse = await _tokenService.RefreshAccessTokenAsync(refreshRequest);
         var validation = await _tokenService.ValidateAccessTokenAsync(new ValidationRequest
         {
             AccessToken = refreshResponse.AccessToken!,
             UserId = userId
         });
-
-        // Assert
         Assert.True(refreshResponse.Succeeded);
         Assert.True(validation.Succeeded);
     }
@@ -122,17 +120,12 @@ public class TokenServiceTests
     [Fact]
     public async Task RefreshToken_InvalidToken_ReturnsFailure()
     {
-        // Arrange
         var refreshRequest = new RefreshTokenRequest
         {
             RefreshToken = "this-token-does-not-exist",
             UserId = Guid.NewGuid()
         };
-
-        // Act
         var response = await _tokenService.RefreshAccessTokenAsync(refreshRequest);
-
-        // Assert
         Assert.False(response.Succeeded);
         Assert.Contains("Invalid refresh token", response.Message);
     }
@@ -140,7 +133,6 @@ public class TokenServiceTests
     [Fact]
     public async Task RefreshToken_WrongUserId_ReturnsFailure()
     {
-        // Arrange
         var request = new TokenRequest
         {
             UserId = Guid.NewGuid(),
@@ -153,11 +145,7 @@ public class TokenServiceTests
             RefreshToken = response.RefreshToken!,
             UserId = Guid.NewGuid() 
         };
-
-        // Act
         var refreshResponse = await _tokenService.RefreshAccessTokenAsync(refreshRequest);
-
-        // Assert
         Assert.False(refreshResponse.Succeeded);
         Assert.Contains("does not match user", refreshResponse.Message);
     }
@@ -165,24 +153,18 @@ public class TokenServiceTests
     [Fact]
     public async Task ValidateAccessTokenAsync_InvalidToken_ReturnsFailure()
     {
-        // Arrange
         var validationRequest = new ValidationRequest
         {
             AccessToken = "not.a.valid.jwt",
             UserId = Guid.NewGuid()
         };
-
-        // Act
         var validation = await _tokenService.ValidateAccessTokenAsync(validationRequest);
-
-        // Assert
         Assert.False(validation.Succeeded);
     }
 
     [Fact]
     public async Task ValidateAccessTokenAsync_ExpiredToken_ReturnsFailure()
     {
-        // Arrange
         var userId = Guid.NewGuid();
         var request = new TokenRequest
         {
@@ -190,19 +172,14 @@ public class TokenServiceTests
             Email = "test@example.com",
             Role = "User"
         };
-        
         // already expired token 
-        var response = await _tokenService.GenerateAccessTokenAsync(request, expiresInDays: -1);
+        var response = await _tokenService.GenerateAccessTokenAsync(request, expiresInMinutes: -1);
         var validationRequest = new ValidationRequest
         {
             AccessToken = response.AccessToken!,
             UserId = userId
         };
-
-        // Act
         var validation = await _tokenService.ValidateAccessTokenAsync(validationRequest);
-
-        // Assert
         Assert.False(validation.Succeeded);
         Assert.False(string.IsNullOrWhiteSpace(validation.Message));
     }
@@ -210,38 +187,22 @@ public class TokenServiceTests
     [Fact]
     public async Task RefreshToken_ExpiredToken_ReturnsFailure()
     {
-        // Arrange
         var userId = Guid.NewGuid();
-        var request = new TokenRequest
-        {
-            UserId = userId,
-            Email = "test@example.com",
-            Role = "User"
-        };
-        // already expired refresh token
         var refreshToken = new RefreshToken
         {
             Token = Guid.NewGuid().ToString(),
             UserId = userId,
-            Expires = DateTime.UtcNow.AddDays(-1), 
+            ExpiresOnUtc = DateTime.UtcNow.AddDays(-1),
             Created = DateTime.UtcNow.AddDays(-2)
         };
-        
-        // add to in-memory store
-        var refreshTokensField = typeof(TokenService.Api.Services.TokenService).GetField("RefreshTokens",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
-        var dict = (System.Collections.IDictionary)refreshTokensField?.GetValue(null)!;
-        dict[refreshToken.Token] = refreshToken;
+        await _dbContext.RefreshTokens.AddAsync(refreshToken);
+        await _dbContext.SaveChangesAsync();
         var refreshRequest = new RefreshTokenRequest
         {
             RefreshToken = refreshToken.Token,
             UserId = userId
         };
-
-        // Act
         var response = await _tokenService.RefreshAccessTokenAsync(refreshRequest);
-
-        // Assert
         Assert.False(response.Succeeded);
         Assert.False(string.IsNullOrWhiteSpace(response.Message));
     }

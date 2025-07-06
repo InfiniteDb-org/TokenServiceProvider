@@ -1,7 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using TokenService.Api.Infrastructure.Configurations;
 using TokenService.Api.Models;
 
-namespace TokenService.Api.Database;
+namespace TokenService.Api.Infrastructure.Database;
 
 public class AppDbContext : DbContext
 {
@@ -10,4 +11,10 @@ public class AppDbContext : DbContext
     }
     
     public DbSet<RefreshToken> RefreshTokens { get; set; }
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.ApplyConfiguration(new RefreshTokenConfiguration());
+        base.OnModelCreating(modelBuilder);
+    }
 }
