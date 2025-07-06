@@ -21,6 +21,7 @@ public static class ServiceRegistrationExtension
         });
         
         services.AddScoped<ITokenService, Services.TokenService>();
+        services.AddScoped<Services.TokenService>();
 
         return services;
     }

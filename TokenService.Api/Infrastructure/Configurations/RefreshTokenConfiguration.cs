@@ -8,9 +8,10 @@ public sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<Refresh
 {
     public void Configure(EntityTypeBuilder<RefreshToken> builder)
     {
+        builder.ToContainer("RefreshTokens"); // Cosmos DB container name
+        builder.HasPartitionKey(r => r.UserId); // Partition key
         builder.HasKey(r => r.Id);
         builder.Property(r => r.Token).HasMaxLength(64).IsRequired();
-        builder.HasIndex(r => r.Token).IsUnique();
         builder.Property(r => r.UserId).IsRequired();
     }
 }
