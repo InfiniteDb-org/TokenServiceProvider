@@ -37,7 +37,7 @@ public class TokenServiceTests
     public async Task GenerateAccessToken_ReturnsValidToken_WithCorrectClaims()
     {
         var userId = Guid.NewGuid();
-        var request = new TokenRequest
+        var request = new GenerateTokenRequest
         {
             UserId = userId,
             Email = "test@example.com",
@@ -53,14 +53,14 @@ public class TokenServiceTests
     public async Task ValidateAccessTokenAsync_ValidToken_ReturnsSuccess()
     {
         var userId = Guid.NewGuid();
-        var request = new TokenRequest
+        var request = new GenerateTokenRequest
         {
             UserId = userId,
             Email = "test@example.com",
             Role = "Admin"
         };
         var response = await _tokenService.GenerateAccessTokenAsync(request);
-        var validationRequest = new ValidationRequest
+        var validationRequest = new ValidateTokenRequest
         {
             AccessToken = response.AccessToken!,
             UserId = userId
@@ -73,7 +73,7 @@ public class TokenServiceTests
     public async Task RefreshToken_CanOnlyBeUsedOnce()
     {
         var userId = Guid.NewGuid();
-        var request = new TokenRequest
+        var request = new GenerateTokenRequest
         {
             UserId = userId,
             Email = "test@example.com",
@@ -95,7 +95,7 @@ public class TokenServiceTests
     public async Task RefreshToken_ClaimsArePreserved()
     {
         var userId = Guid.NewGuid();
-        var request = new TokenRequest
+        var request = new GenerateTokenRequest
         {
             UserId = userId,
             Email = "admin@example.com",
@@ -108,7 +108,7 @@ public class TokenServiceTests
             UserId = userId
         };
         var refreshResponse = await _tokenService.RefreshAccessTokenAsync(refreshRequest);
-        var validation = await _tokenService.ValidateAccessTokenAsync(new ValidationRequest
+        var validation = await _tokenService.ValidateAccessTokenAsync(new ValidateTokenRequest
         {
             AccessToken = refreshResponse.AccessToken!,
             UserId = userId
@@ -133,7 +133,7 @@ public class TokenServiceTests
     [Fact]
     public async Task RefreshToken_WrongUserId_ReturnsFailure()
     {
-        var request = new TokenRequest
+        var request = new GenerateTokenRequest
         {
             UserId = Guid.NewGuid(),
             Email = "test@example.com",
@@ -153,7 +153,7 @@ public class TokenServiceTests
     [Fact]
     public async Task ValidateAccessTokenAsync_InvalidToken_ReturnsFailure()
     {
-        var validationRequest = new ValidationRequest
+        var validationRequest = new ValidateTokenRequest
         {
             AccessToken = "not.a.valid.jwt",
             UserId = Guid.NewGuid()
@@ -166,7 +166,7 @@ public class TokenServiceTests
     public async Task ValidateAccessTokenAsync_ExpiredToken_ReturnsFailure()
     {
         var userId = Guid.NewGuid();
-        var request = new TokenRequest
+        var request = new GenerateTokenRequest
         {
             UserId = userId,
             Email = "test@example.com",
@@ -174,7 +174,7 @@ public class TokenServiceTests
         };
         // already expired token 
         var response = await _tokenService.GenerateAccessTokenAsync(request, expiresInMinutes: -1);
-        var validationRequest = new ValidationRequest
+        var validationRequest = new ValidateTokenRequest
         {
             AccessToken = response.AccessToken!,
             UserId = userId

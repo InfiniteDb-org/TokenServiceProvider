@@ -11,9 +11,9 @@ namespace TokenService.Api.Services;
 
 public interface ITokenService
 {
-    Task<TokenResponse> GenerateAccessTokenAsync(TokenRequest request, int expiresInMinutes = 0);
-    Task<ValidationResponse> ValidateAccessTokenAsync(ValidationRequest request);
-    Task<TokenResponse> RefreshAccessTokenAsync(RefreshTokenRequest request);
+    Task<GenerateTokenResponse> GenerateAccessTokenAsync(GenerateTokenRequest request, int expiresInMinutes = 0);
+    Task<ValidateTokenResponse> ValidateAccessTokenAsync(ValidateTokenRequest request);
+    Task<GenerateTokenResponse> RefreshAccessTokenAsync(RefreshTokenRequest request);
     Task<int> CleanupOldRefreshTokensAsync(int daysToKeep = 30);
 }
 
@@ -34,15 +34,16 @@ public class TokenService: ITokenService
         _audience = configuration["Audience"] ?? throw new NullReferenceException("Audience config not set");
         _key = configuration["Key"] ?? throw new NullReferenceException("Key config not set");
 
+        // config key for access token expiration
         if (!int.TryParse(configuration["ExpiresInMinutes"], out _expiresInMinutes)) _expiresInMinutes = 10; 
     }
     
 
-    public async Task<TokenResponse> GenerateAccessTokenAsync(TokenRequest request, int expiresInMinutes = 0)
+    // Generates a new JWT access token and refresh token for the specified user and persists the refresh token.
+    public async Task<GenerateTokenResponse> GenerateAccessTokenAsync(GenerateTokenRequest request, int expiresInMinutes = 0)
     {
         try
         {
-            // Check that UserId is provided
             if (request.UserId is null)
                 throw new NullReferenceException("No UserId provided");
             
@@ -56,16 +57,15 @@ public class TokenService: ITokenService
                 new(ClaimTypes.NameIdentifier, request.UserId.Value.ToString()),
                 new(JwtRegisteredClaimNames.Sub, request.UserId.Value.ToString())
             ];
-            if (!string.IsNullOrEmpty(request.Email))
+            if (!string.IsNullOrEmpty(request.Email)) 
                 claims.Add(new Claim(ClaimTypes.Email, request.Email));
             claims.Add(new Claim(ClaimTypes.Role, CapitalizeRole(request.Role ?? "user")));
             
-            // 
+            // Add custom claims
             if (request.CustomClaims is not null)
             {
                 foreach (var (key, value) in request.CustomClaims)
                 {
-                    // PascalCase på claim-typ, value bara lowercase för admin
                     var claimType = char.ToUpper(key[0]) + key[1..];
                     var claimValue = key.Equals("admin", StringComparison.OrdinalIgnoreCase)
                         ? value.ToString()!.ToLowerInvariant()
@@ -87,14 +87,14 @@ public class TokenService: ITokenService
             var tokenHandler =  new JwtSecurityTokenHandler();
             var token = tokenHandler.CreateToken(tokenDescriptor);
             
-            // refresh token generation
+            // Generate and persist a new refresh token for the user
             var refreshToken = GenerateRefreshToken(request.UserId.Value, request.Email, request.Role);
             await _context.RefreshTokens.AddAsync(refreshToken);
             await _context.SaveChangesAsync();
             
 
-            // Return the generated JWT token and refresh token
-            return new TokenResponse
+            // Return the generated JWT token 
+            return new GenerateTokenResponse
             {
                 Succeeded = true,
                 AccessToken = tokenHandler.WriteToken(token),
@@ -104,11 +104,10 @@ public class TokenService: ITokenService
         }
     
         catch (Exception ex)
-        // Return error if token generation fails
-        { return new TokenResponse { Succeeded = false, Message = ex.Message }; }
+        { return new GenerateTokenResponse { Succeeded = false, Message = ex.Message }; }
     }
 
-    public Task<ValidationResponse> ValidateAccessTokenAsync(ValidationRequest request)
+    public Task<ValidateTokenResponse> ValidateAccessTokenAsync(ValidateTokenRequest request)
     {
         var tokenHandler = new JwtSecurityTokenHandler();
         
@@ -132,56 +131,54 @@ public class TokenService: ITokenService
 
             if (!Guid.TryParse(userIdClaim, out var userIdFromToken))
                 throw new Exception("UserId in claims is not a valid Guid.");
-
             if (request.UserId is null)
                 throw new Exception("UserId in request is null.");
-
             if (userIdFromToken != request.UserId.Value)
                 throw new Exception("UserId in claims does not match UserId in request");
 
             var username = principal.FindFirst(ClaimTypes.Email)?.Value ?? userIdClaim;
 
             // Return success if token is valid and userId matches
-            return Task.FromResult(new ValidationResponse { Succeeded = true, Message = $"Token is valid for {username}." });
+            return Task.FromResult(new ValidateTokenResponse { Succeeded = true, Message = $"Token is valid for {username}." });
         }
         catch (Exception ex)
-        { return Task.FromResult(new ValidationResponse { Succeeded = false, Message = ex.Message }); }
+        { return Task.FromResult(new ValidateTokenResponse { Succeeded = false, Message = ex.Message }); }
     }
 
-    public async Task<TokenResponse> RefreshAccessTokenAsync(RefreshTokenRequest request)
-{
-    var storedToken = await _context.RefreshTokens.FirstOrDefaultAsync(r => r.Token == request.RefreshToken);
-    if (storedToken == null)
-        return new TokenResponse { Succeeded = false, Message = "Invalid refresh token." };
-    if (storedToken.Used || storedToken.Revoked)
-        return new TokenResponse { Succeeded = false, Message = "Refresh token already used or revoked." };
-    if (storedToken.ExpiresOnUtc < DateTime.UtcNow)
-        return new TokenResponse { Succeeded = false, Message = "Refresh token expired." };
-    if (storedToken.UserId != request.UserId)
-        return new TokenResponse { Succeeded = false, Message = "Refresh token does not match user." };
-
-    // Mark old as used
-    storedToken.Used = true;
-    await _context.SaveChangesAsync();
-
-    // Skapa nytt refresh token
-    var newRefreshToken = GenerateRefreshToken(storedToken.UserId, storedToken.Email, storedToken.Role);
-    await _context.RefreshTokens.AddAsync(newRefreshToken);
-    await _context.SaveChangesAsync();
-
-    // Skapa nytt access token
-    var tokenRequest = new TokenRequest { UserId = storedToken.UserId, Email = storedToken.Email, Role = storedToken.Role };
-    var newAccessToken = await GenerateAccessTokenAsync(tokenRequest);
-
-    // Returnera båda nya tokens
-    return new TokenResponse
+    public async Task<GenerateTokenResponse> RefreshAccessTokenAsync(RefreshTokenRequest request)
     {
-        Succeeded = true,
-        AccessToken = newAccessToken.AccessToken,
-        RefreshToken = newRefreshToken.Token,
-        Message = "Access and refresh token rotated."
-    };
-}
+        var storedToken = await _context.RefreshTokens.FirstOrDefaultAsync(r => r.Token == request.RefreshToken);
+        if (storedToken == null)
+            return new GenerateTokenResponse { Succeeded = false, Message = "Invalid refresh token." };
+        if (storedToken.Used || storedToken.Revoked)
+            return new GenerateTokenResponse { Succeeded = false, Message = "Refresh token already used or revoked." };
+        if (storedToken.ExpiresOnUtc < DateTime.UtcNow)
+            return new GenerateTokenResponse { Succeeded = false, Message = "Refresh token expired." };
+        if (storedToken.UserId != request.UserId)
+            return new GenerateTokenResponse { Succeeded = false, Message = "Refresh token does not match user." };
+
+        // Mark old as used
+        storedToken.Used = true;
+        await _context.SaveChangesAsync();
+        
+        // create new refresh token
+        var newRefreshToken = GenerateRefreshToken(storedToken.UserId, storedToken.Email, storedToken.Role);
+        await _context.RefreshTokens.AddAsync(newRefreshToken);
+        await _context.SaveChangesAsync();
+        
+        // create new access token
+        var tokenRequest = new GenerateTokenRequest { UserId = storedToken.UserId, Email = storedToken.Email, Role = storedToken.Role };
+        var newAccessToken = await GenerateAccessTokenAsync(tokenRequest);
+        
+        // return both tokens
+        return new GenerateTokenResponse
+        {
+            Succeeded = true,
+            AccessToken = newAccessToken.AccessToken,
+            RefreshToken = newRefreshToken.Token,
+            Message = "Access and refresh token rotated."
+        };
+    }
 
     // helper method to ensure consistent role casing
     private static string CapitalizeRole(string role) =>
@@ -193,6 +190,8 @@ public class TokenService: ITokenService
         var randomBytes = new byte[64];
         using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
         rng.GetBytes(randomBytes);
+        
+        // config key for refresh token expiration (days)
         var refreshTokenExpiresInDays = _configuration.GetValue("RefreshTokenExpiresInDays", 7);
         return new RefreshToken
         {

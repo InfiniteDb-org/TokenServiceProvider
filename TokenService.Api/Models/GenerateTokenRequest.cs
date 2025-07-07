@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TokenService.Api.Models;
 
-public class TokenRequest
+public class GenerateTokenRequest
 {
     [Required]
     public Guid? UserId { get; set; }

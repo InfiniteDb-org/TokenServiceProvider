@@ -1,55 +1,36 @@
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
+using TokenService.Api.Helpers;
 using TokenService.Api.Models;
 using TokenService.Api.Services;
 
 namespace TokenService.Api.Functions;
 
-public class ValidateToken(ILogger<ValidateToken> logger, ITokenService tokenService)
+public class ValidateToken(ITokenService tokenService)
 {
-    private readonly ILogger<ValidateToken> _logger = logger;
     private readonly ITokenService _tokenService = tokenService;
 
-    private static BadRequestObjectResult BadRequest(string? message) => new(new TokenResponse { Succeeded = false, Message = message });
-
     [Function("ValidateToken")]
-    public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
+    public async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequestData req,
+        FunctionContext executionContext)
     {
-        try
-        {
-            var body = await new StreamReader(req.Body).ReadToEndAsync();
-            if (string.IsNullOrEmpty(body))
-            {
-                const string message = "Request body is empty.";
-                _logger.LogWarning(message);
-                return BadRequest(message);
-            }
+        var logger = executionContext.GetLogger("ValidateToken");
 
-            ValidationRequest? validationRequest;
-            try
-            {
-                validationRequest = JsonConvert.DeserializeObject<ValidationRequest>(body);
-                if (validationRequest == null)
-                    throw new JsonException("Deserialization returned null-");
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogError(ex, "Failed to deserialize request body.");
-                return BadRequest("Invalid JSON format in request body.");
-            }
-            
-            var tokenResponse = await _tokenService.ValidateAccessTokenAsync(validationRequest);
-            return tokenResponse.Succeeded
-                ? new OkObjectResult(tokenResponse)
-                : new UnauthorizedObjectResult(new ValidationResponse { Succeeded = false, Message = "Invalid or expired access token" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogInformation(ex, "Unhandled exception in GenerateToken.");
-            return BadRequest("Internal server error while generating token.");
-        }
+        var bodyResult = await RequestBodyHelper.ReadAndValidateRequestBody<ValidateTokenRequest>(req, logger);
+        logger.LogInformation("BodyResult: Succeeded={Succeeded}, Message={Message}", bodyResult.Succeeded, bodyResult.Message);
+
+        if (!bodyResult.Succeeded)
+            return ActionResultHelper.CreateResponse(bodyResult);
+
+        var validationRequest = bodyResult.Data!;
+        logger.LogInformation("ValidationRequest: userId={UserId}, accessToken={AccessToken}", validationRequest.UserId, validationRequest.AccessToken);
+
+        var tokenResponse = await _tokenService.ValidateAccessTokenAsync(validationRequest);
+        logger.LogInformation("TokenResponse: Succeeded={Succeeded}, Message={Message}", tokenResponse.Succeeded, tokenResponse.Message);
+
+        return ActionResultHelper.CreateResponse(tokenResponse);
     }
 }

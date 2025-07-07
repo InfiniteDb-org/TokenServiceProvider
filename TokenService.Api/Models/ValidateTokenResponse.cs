@@ -1,8 +1,5 @@
 namespace TokenService.Api.Models;
 
-public class ValidationResponse : ResponseResult
+public class ValidateTokenResponse : ResponseResult
 {
-    public bool Succeeded { get; set; }
-    public string? Message { get; set; }
-    // public string? NewAccessToken { get; set; }
 }
